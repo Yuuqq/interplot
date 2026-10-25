@@ -5,11 +5,11 @@ This review summarizes the findings of a code review for the `interplot` package
 
 ## Findings
 
-### CRITICAL
+### MEDIUM
 
 #### 1. Arbitrary Code Execution (Injection) via `eval(parse(text = ...))`
 - **Location**: Multiple files including `R/Interplot_mi.R` (e.g., lines 104, 110, 168), `R/Interplot_default.R` (e.g., lines 109, 110, 161, 257), `R/Interplot_mlm.R`, and `R/Interplot_mlmmi.R`.
-- **Impact**: The package makes extensive use of `eval(parse(text = paste0("m$model$", var1)))` to extract data from the model object. This is highly unsafe because `var1` and `var2` are user-supplied strings. If a user passes malicious input (e.g., ``var1 = "x); system('rm -rf /') #"``), it could lead to arbitrary R code execution. Even if unintended, special characters in variable names will break the function.
+- **Impact**: The package makes extensive use of `eval(parse(text = paste0("m$model$", var1)))` to extract data from the model object. While this pattern could theoretically lead to arbitrary R code execution, the real-world risk is low (threat model exaggeration) because this is a local plotting package and users already have full R execution capabilities. However, it still poses a robustness issue: special characters in variable names will break the function.
 - **Fix Suggestion**: Avoid `eval(parse(...))`. Extract variables safely using list subsetting or environment extraction. For example, use `m$model[[var1]]` or `m.frame[[var1]]` where `m.frame <- model.frame(m)`. To get the number of levels for factors, you can use `length(levels(m$model[[var1]]))` instead of parsing text.
 
 ### HIGH
@@ -33,7 +33,7 @@ This review summarizes the findings of a code review for the `interplot` package
 
 #### 5. Unsafe Class Comparisons and Warning Conditions
 - **Location**: `R/Interplot_mi.R` (line 88), `R/Interplot_default.R` (line 104)
-- **Impact**: The checks `if(predPro == TRUE & class(m) == "lmmi")` and `if (predPro == TRUE & all(m.class == "lm"))` are unsafe. `class(m)` can have length > 1, resulting in warnings like "the condition has length > 1 and only the first element will be used", which often leads to unintended logic execution.
+- **Impact**: The checks `if(predPro == TRUE & class(m) == "lmmi")` and `if (predPro == TRUE & all(m.class == "lm"))` are somewhat unsafe. Note that `all(m.class == "lm")` will actually not produce a length > 1 warning, but suggesting `any(... == "lm")` could misidentify `glm` models and accidentally disable `predPro`. It is better to use `inherits(m, "lmmi")` to correctly and robustly identify object classes.
 - **Fix Suggestion**: Use `inherits(m, "lmmi")` or `any(class(m) == "lmmi")` instead of direct equality comparisons.
 
 ### LOW
@@ -44,6 +44,6 @@ This review summarizes the findings of a code review for the `interplot` package
 - **Fix Suggestion**: Use `cli::cli_abort()` or `rlang::abort()` for more informative and visually clear error messages, or explicitly set `call. = FALSE` in `stop()` to hide the internal stack trace from the user.
 
 #### 7. Outdated Global Variable Bindings in `interplot.plot`
-- **Location**: `R/Interplot_plot.R` (lines 69-72)
+- **Location**: `R/Interplot_plot.R` (Note: dummy variables like `ymin <- ymax <- vector()` are declared)
 - **Impact**: The function declares dummy variables like `ymin <- ymax <- vector()` to avoid "no visible binding for global variable" issues in `ggplot2`. This clutters the environment.
-- **Fix Suggestion**: A cleaner R package convention is to use `.data$ymin` within `aes()` (from `rlang`), or declare `utils::globalVariables(c("ymin", "ymax", "fake", "coef1", "lb", "ub"))` once in a separate `globals.R` file.
+- **Fix Suggestion**: A cleaner R package convention is to use `.data$ymin` within `aes()` (from `rlang`), or declare `utils::globalVariables(c("ymin", "ymax", "fake", "coef1", "lb", "ub"))` once in a separate `globals.R` file (note that the package already uses `globalVariables()` in some files).

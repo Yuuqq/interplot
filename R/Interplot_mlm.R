@@ -135,6 +135,7 @@ interplot.lmerMod <- function(m,
     coef_df <- ls_results[[1]]
     ci_diff <- ls_results[[2]]
     steps <- ls_results[[3]]
+  ks_diff <- ls_results[[4]]
     
     # Plotting ####
     
@@ -149,12 +150,24 @@ interplot.lmerMod <- function(m,
       if(stats_cp == "ci"){
         facet_labs <- map2(ci_diff, facet_labs, \(aCI, aLevel){
           paste0(aLevel,
-                 "\n CI(Max - Min): [",
+                 "
+ CI(Max - Min): [",
                  round(aCI[1], digits = 3),
                  ", ",
                  round(aCI[2], digits = 3),
                  "]")
         }) |> 
+          list_c()
+      } else if(stats_cp == "ks"){
+        facet_labs <- map2(ks_diff, facet_labs, \(aks, aLevel){
+          paste0(aLevel,
+                 "
+ D(KS): ",
+                 round(aks$statistic, digits = 3),
+                 " (p-value = ",
+                 format(round(aks$p.value, digits = 3), nsmall = 3),
+                 ")")
+        }) |>
           list_c()
       }
       
@@ -251,6 +264,7 @@ extract_coef_numM <- function(
   # Calculate the effects ####
   
   ci_diff <- vector(mode = "numeric")
+  ks_diff <- NULL
   
   multiplier <- if (var1 == var2) 2 else 1
   
@@ -279,9 +293,9 @@ extract_coef_numM <- function(
     for (i in 1:steps) {
       coef$coef1[i] <- mean(m.sims@fixef[, match(var1, unlist(dimnames(m@pp$X)[2]))] + multiplier * coef$fake[i] * m.sims@fixef[, match(var12, unlist(dimnames(m@pp$X)[2]))])
       
-      coef$ub[i] <- quantile(m.sims@fixef[, match(var1, unlist(dimnames(m@pp$X)[2]))] + multiplier * coef$fake[i] * m.sims@fixef[, match(var12, unlist(dimnames(m@pp$X)[2]))], (1 - ci) / 2)
+      coef$ub[i] <- quantile(m.sims@fixef[, match(var1, unlist(dimnames(m@pp$X)[2]))] + multiplier * coef$fake[i] * m.sims@fixef[, match(var12, unlist(dimnames(m@pp$X)[2]))], 1 - (1 - ci) / 2)
       
-      coef$lb[i] <- quantile(m.sims@fixef[, match(var1, unlist(dimnames(m@pp$X)[2]))] + multiplier * coef$fake[i] * m.sims@fixef[, match(var12, unlist(dimnames(m@pp$X)[2]))], 1 - (1 - ci) / 2)
+      coef$lb[i] <- quantile(m.sims@fixef[, match(var1, unlist(dimnames(m@pp$X)[2]))] + multiplier * coef$fake[i] * m.sims@fixef[, match(var12, unlist(dimnames(m@pp$X)[2]))],   (1 - ci) / 2)
     }
     
     # Calculate the difference between the effect at the minmum and maxmum value of var2
@@ -307,7 +321,7 @@ extract_coef_numM <- function(
       
       Sigma <- diag(getME(m, "theta")) 
       satterth_df <- resid_df - sum(2*Sigma^2/Sigma^2)
-      warning("For `lme4` objects, the degree of freedom is calculated by the the Satterthwaite approximation.")
+      warning("For `lme4` objects, the degree of freedom is calculated by a naive pooling approximation, not the Satterthwaite approximation.")
       
       ## FDR correction
       coef$sd <- (coef$ub - coef$coef1) / qnorm(1 - (1 - ci) / 2)
@@ -318,7 +332,7 @@ extract_coef_numM <- function(
     }  
   }
   
-  return(list(coef, ci_diff, steps))
+  return(list(coef, ci_diff, steps, ks_diff))
 }
 
 
@@ -396,6 +410,7 @@ extract_coef_facM <- function(
   # Calculate the effects ####
   
   ci_diff <- vector(mode = "list")
+  ks_diff <- vector(mode = "list")
   
   if (factor_v1) {
     
@@ -413,7 +428,7 @@ extract_coef_facM <- function(
         
         coef$ub[i] <- quantile(m.sims@fixef[, var1[j + 1]] + coef$fake[i] * m.sims@fixef[, var12[j]], 1 - (1 - ci) / 2)
         
-        coef$lb[i] <- quantile(m.sims@fixef[, var1[j + 1]] + coef$fake[i] * m.sims@fixef[, var12[j]], (1 - ci) / 2)
+        coef$lb[i] <- quantile(m.sims@fixef[, var1[j + 1]] + coef$fake[i] * m.sims@fixef[, var12[j]],   (1 - ci) / 2)
       }
       
       # Calculate the difference between the effect at the minmum and maxmum value of var2
@@ -425,6 +440,7 @@ extract_coef_facM <- function(
         quantile(diff, (1 - ci) / 2),
         quantile(diff, 1 - (1 - ci) / 2)
       ) # confidence intervals of the difference
+      ks_diff[[j]] <- ks.test(min_sim, max_sim)
       
       # Correct the standard errors
       if (adjCI == TRUE) {
@@ -435,11 +451,11 @@ extract_coef_facM <- function(
         
         Sigma <- diag(getME(m, "theta")) 
         satterth_df <- resid_df - sum(2*Sigma^2/Sigma^2)
-        warning("For `lme4` objects, the degree of freedom is calculated by the the Satterthwaite approximation.")
+        warning("For `lme4` objects, the degree of freedom is calculated by a naive pooling approximation, not the Satterthwaite approximation.")
         
         ## FDR correction
         coef$sd <- (coef$ub - coef$coef1) / qnorm(1 - (1 - ci) / 2)
-        tAdj <- interactionTestfdrInteraction(coef$coef1, coef$sd, df = satterth_df, level = .95) # calculate critical t
+        tAdj <- interactionTest::fdrInteraction(coef$coef1, coef$sd, df = satterth_df, level = .95) # calculate critical t
         coef$ub <- coef$coef1 + tAdj * coef$sd
         coef$lb <- coef$coef1 - tAdj * coef$sd
       }
@@ -464,7 +480,7 @@ extract_coef_facM <- function(
         
         coef$ub[i] <- quantile(m.sims@fixef[, var1] + coef$fake[i] * m.sims@fixef[, var12[j]], 1 - (1 - ci) / 2)
         
-        coef$lb[i] <- quantile(m.sims@fixef[, var1] + coef$fake[i] * m.sims@fixef[, var12[j]], (1 - ci) / 2)
+        coef$lb[i] <- quantile(m.sims@fixef[, var1] + coef$fake[i] * m.sims@fixef[, var12[j]],   (1 - ci) / 2)
       }
       
       # Calculate the difference between the effect at the minmum and maxmum value of var2
@@ -476,12 +492,13 @@ extract_coef_facM <- function(
         quantile(diff, (1 - ci) / 2),
         quantile(diff, 1 - (1 - ci) / 2)
       ) # confidence intervals of the difference
+      ks_diff[[j]] <- ks.test(min_sim, max_sim)
       
       # Correct the standard errors
       if (adjCI == TRUE) {
         ## FDR correction
         coef$sd <- (coef$ub - coef$coef1) / qnorm(1 - (1 - ci) / 2)
-        tAdj <- fdrInteraction(coef$coef1, coef$sd, df = m$df, level = .95) # calculate critical t
+        tAdj <- interactionTest::fdrInteraction(coef$coef1, coef$sd, df = m$df, level = .95) # calculate critical t
         coef$ub <- coef$coef1 + tAdj * coef$sd
         coef$lb <- coef$coef1 - tAdj * coef$sd
       }
@@ -494,7 +511,7 @@ extract_coef_facM <- function(
   
   names(ci_diff) <- var12
   
-  return(list(coef_df, ci_diff, steps))
+  return(list(coef_df, ci_diff, steps, ks_diff))
 } 
 
 #' @export
